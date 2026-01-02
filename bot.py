@@ -1,55 +1,115 @@
-import os
 import requests
+import os
 
 API_KEY = os.getenv("API_KEY")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
-HEADERS = {"x-apisports-key": API_KEY}
-
-LEAGUES = {
-    363: "Ethiopia Premier League",
-    585: "Uganda Premier League",
-    567: "Tanzania Premier League",
+HEADERS = {
+    "x-apisports-key": API_KEY
 }
 
-SEASON = 2024
+LEAGUES = [
+    363,  # Ethiopia
+    585,  # Uganda
+    567,  # Tanzania
+    400,  # Zambia
+    276,  # Kenya
+    324,  # India I-League
+    398   # Bangladesh
+]
 
-def tg(text):
+def get_fixtures():
+    fixtures = []
+    for league in LEAGUES:
+        url = f"https://v3.football.api-sports.io/fixtures?league={league}&next=5"
+        r = requests.get(url, headers=HEADERS)
+        data = r.json()
+        fixtures.extend(data["response"])
+    return fixtures
+
+def get_team_stats(team_id, league, season):
+    url = f"https://v3.football.api-sports.io/teams/statistics?team={team_id}&league={league}&season={season}"
+    r = requests.get(url, headers=HEADERS)
+    return r.json()["response"]
+
+def analyze_match(fixture):
+    league = fixture["league"]["id"]
+    season = fixture["league"]["season"]
+
+    home = fixture["teams"]["home"]
+    away = fixture["teams"]["away"]
+
+    stats_home = get_team_stats(home["id"], league, season)
+    stats_away = get_team_stats(away["id"], league, season)
+
+    draw_rate = (
+        stats_home["fixtures"]["draws"]["total"] +
+        stats_away["fixtures"]["draws"]["total"]
+    ) / (
+        stats_home["fixtures"]["played"]["total"] +
+        stats_away["fixtures"]["played"]["total"]
+    )
+
+    goals_avg = (
+        stats_home["goals"]["for"]["average"]["total"] +
+        stats_away["goals"]["for"]["average"]["total"]
+    ) / 2
+
+    goal_diff = abs(
+        stats_home["goals"]["for"]["average"]["total"] -
+        stats_away["goals"]["for"]["average"]["total"]
+    )
+
+    score = 0
+    if draw_rate >= 0.45:
+        score += 1
+    if goals_avg <= 2.4:
+        score += 1
+    if goal_diff <= 0.5:
+        score += 1
+
+    return score, draw_rate, goals_avg, goal_diff
+
+def send_message(text):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    requests.post(url, json={"chat_id": CHAT_ID, "text": text})
-
-def get(url):
-    return requests.get(url, headers=HEADERS, timeout=20).json()
+    requests.post(url, data={
+        "chat_id": CHAT_ID,
+        "text": text,
+        "parse_mode": "HTML"
+    })
 
 def main():
-    for lid, lname in LEAGUES.items():
-        data = get(
-            f"https://v3.football.api-sports.io/fixtures"
-            f"?league={lid}&season={SEASON}&next=5"
-        )
+    fixtures = get_fixtures()
+    best = None
+    best_score = -1
 
-        if not data.get("response"):
-            tg(f"❌ {lname}: sin fixtures")
+    for f in fixtures:
+        try:
+            score, draw, goals, diff = analyze_match(f)
+            if score > best_score:
+                best_score = score
+                best = (f, draw, goals, diff)
+        except:
             continue
 
-        f = data["response"][0]
-        h = f["teams"]["home"]["name"]
-        a = f["teams"]["away"]["name"]
-        fecha = f["fixture"]["date"][:16].replace("T", " ")
+    if not best:
+        send_message("⚠️ No se encontró ningún partido analizable.")
+        return
 
-        tg(
-            f"🧪 TEST OK\n"
-            f"⚽ {h} vs {a}\n"
-            f"📅 {fecha}\n"
-            f"🏟️ {lname}"
-        )
-        return   # ← este return está BIEN, dentro de main()
+    f, draw, goals, diff = best
 
-    tg("❌ No se pudo leer ningún partido")
+    msg = (
+        f"🤝 <b>MEJOR PARTIDO PARA EMPATE</b>\n\n"
+        f"{f['teams']['home']['name']} vs {f['teams']['away']['name']}\n"
+        f"🏆 Liga: {f['league']['name']}\n"
+        f"📅 Fecha: {f['fixture']['date'][:10]}\n\n"
+        f"📊 Empates combinados: {round(draw*100,1)}%\n"
+        f"⚽ Goles promedio: {round(goals,2)}\n"
+        f"📉 Diferencia ofensiva: {round(diff,2)}"
+    )
+
+    send_message(msg)
 
 if __name__ == "__main__":
     main()
-
-
-
