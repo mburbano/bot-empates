@@ -1,3 +1,4 @@
+
 import os
 import requests
 from datetime import datetime, timedelta
@@ -15,10 +16,15 @@ CHAT_ID = os.getenv("CHAT_ID")
 API_URL = "https://v3.football.api-sports.io"
 HEADERS = {"x-apisports-key": API_KEY}
 
-WEIGHT_DRAW_RATE = 0.5
-WEIGHT_GOALS_AVG = 0.3
-WEIGHT_GOAL_DIFF = 0.2
+# Pesos del score (empate)
+W_DRAW = 0.55
+W_GOALS = 0.25
+W_DIFF  = 0.20
 
+# Umbral de “buena calidad” (no bloquea, solo etiqueta)
+QUALITY_THRESHOLD = 0.45
+
+# Ecuador UTC-5
 ECUADOR_OFFSET = timedelta(hours=-5)
 
 # =========================
@@ -29,55 +35,58 @@ def api_get(endpoint, params):
     r.raise_for_status()
     return r.json().get("response", [])
 
-def get_fixtures():
-    today = datetime.utcnow().date()
-    tomorrow = today + timedelta(days=1)
-
+def get_fixtures_next_days(days=7):
+    start = datetime.utcnow().date()
+    end = start + timedelta(days=days)
     return api_get("fixtures", {
-        "from": today.isoformat(),
-        "to": tomorrow.isoformat(),
+        "from": start.isoformat(),
+        "to": end.isoformat(),
         "status": "NS"
     })
 
-def get_h2h(home_id, away_id):
+def get_h2h(home_id, away_id, last=10):
     try:
         return api_get("fixtures/headtohead", {
             "h2h": f"{home_id}-{away_id}",
-            "last": 10
+            "last": last
         })
     except:
         return []
 
-def analyze_match(fixture):
-    home = fixture["teams"]["home"]
-    away = fixture["teams"]["away"]
+def analyze_fixture(fx):
+    home = fx["teams"]["home"]
+    away = fx["teams"]["away"]
 
-    h2h = get_h2h(home["id"], away["id"])
+    h2h = get_h2h(home["id"], away["id"], last=10)
 
-    if len(h2h) == 0:
-        draw_rate = 0.0
-        goals_avg = 3.0
-        goal_diff = 2.0
-        forced = True
-    else:
-        draws, goals, diffs = 0, [], []
+    # Métricas reales; si no hay H2H suficientes, se penaliza (no se fuerza)
+    if len(h2h) >= 5:
+        draws = 0
+        goals_sum = 0
+        diffs = 0
 
         for m in h2h:
             gh, ga = m["goals"]["home"], m["goals"]["away"]
             if gh == ga:
                 draws += 1
-            goals.append(gh + ga)
-            diffs.append(abs(gh - ga))
+            goals_sum += gh + ga
+            diffs += abs(gh - ga)
 
         draw_rate = draws / len(h2h)
-        goals_avg = sum(goals) / len(goals)
-        goal_diff = sum(diffs) / len(diffs)
-        forced = False
+        goals_avg = goals_sum / len(h2h)
+        goal_diff = diffs / len(h2h)
+        data_quality = "OK"
+    else:
+        # Penalización por pocos datos (NO forzar)
+        draw_rate = 0.10
+        goals_avg = 3.2
+        goal_diff = 2.2
+        data_quality = "BAJA"
 
     score = (
-        draw_rate * WEIGHT_DRAW_RATE
-        + (1 / (1 + goals_avg)) * WEIGHT_GOALS_AVG
-        + (1 / (1 + goal_diff)) * WEIGHT_GOAL_DIFF
+        draw_rate * W_DRAW
+        + (1 / (1 + goals_avg)) * W_GOALS
+        + (1 / (1 + goal_diff)) * W_DIFF
     )
 
     return {
@@ -85,84 +94,69 @@ def analyze_match(fixture):
         "draw_rate": draw_rate,
         "goals_avg": goals_avg,
         "goal_diff": goal_diff,
+        "quality": data_quality,
         "home": home["name"],
         "away": away["name"],
-        "league": fixture["league"]["name"],
-        "country": fixture["league"]["country"],
-        "datetime": fixture["fixture"]["date"],
-        "forced": forced
+        "league": fx["league"]["name"],
+        "country": fx["league"]["country"],
+        "datetime": fx["fixture"]["date"]
     }
 
-def send_telegram(msg):
+def send_telegram(text):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     requests.post(url, data={
         "chat_id": CHAT_ID,
-        "text": msg,
+        "text": text,
         "parse_mode": "HTML"
     }, timeout=20)
 
-def format_ecuador(utc_str):
-    utc_dt = datetime.fromisoformat(utc_str.replace("Z", "+00:00"))
-    return (utc_dt + ECUADOR_OFFSET).strftime("%Y-%m-%d %H:%M")
+def to_ecuador(utc_iso):
+    dt = datetime.fromisoformat(utc_iso.replace("Z", "+00:00"))
+    return (dt + ECUADOR_OFFSET).strftime("%Y-%m-%d %H:%M")
 
 # =========================
 # MAIN
 # =========================
 def main():
-    fixtures = get_fixtures()
+    fixtures = get_fixtures_next_days(days=7)
 
-    # CASO EXTREMO: CERO PARTIDOS
-    if not fixtures:
-        send_telegram(
-            "⚠️ <b>Sin partidos disponibles</b>\n\n"
-            "La API no reporta encuentros próximos.\n"
-            "El bot seguirá intentando automáticamente."
-        )
-        return
-
+    # Si la API devuelve algo (normalmente siempre), se analiza TODO
     analyzed = []
-
-    for f in fixtures:
+    for fx in fixtures:
         try:
-            analyzed.append(analyze_match(f))
+            analyzed.append(analyze_fixture(fx))
         except:
             continue
 
-    # Fallback absoluto
+    # Si por algún motivo extremo no hubo análisis válidos,
+    # NO inventamos partidos: tomamos el mejor score calculado disponible.
     if not analyzed:
-        f = fixtures[0]
-        analyzed.append({
-            "score": 0.0,
-            "draw_rate": 0.0,
-            "goals_avg": 3.0,
-            "goal_diff": 2.0,
-            "home": f["teams"]["home"]["name"],
-            "away": f["teams"]["away"]["name"],
-            "league": f["league"]["name"],
-            "country": f["league"]["country"],
-            "datetime": f["fixture"]["date"],
-            "forced": True
-        })
+        send_telegram(
+            "⚠️ <b>Sin análisis válido hoy</b>\n"
+            "La API respondió sin datos analizables.\n"
+            "El bot reintenta automáticamente."
+        )
+        return
 
     best = max(analyzed, key=lambda x: x["score"])
 
-    if best["forced"]:
-        status = "⚠️ Partido forzado (pocos datos)"
-    elif best["draw_rate"] >= 0.3:
-        status = "APTO para empate"
-    else:
-        status = "NO ideal, pero mejor opción del día"
+    status = (
+        "APTO para empate"
+        if best["score"] >= QUALITY_THRESHOLD and best["quality"] == "OK"
+        else "MEJOR OPCIÓN DISPONIBLE (confianza moderada)"
+    )
 
     msg = (
         f"⚽ <b>MEJOR PARTIDO PARA EMPATE</b>\n\n"
         f"🏆 {best['league']} ({best['country']})\n"
         f"👥 {best['home']} vs {best['away']}\n"
-        f"🕒 {format_ecuador(best['datetime'])} (Ecuador)\n\n"
+        f"🕒 {to_ecuador(best['datetime'])} (Ecuador)\n\n"
         f"📊 <b>Métricas</b>\n"
-        f"• % Empates: {best['draw_rate']*100:.1f}%\n"
+        f"• % Empates (H2H): {best['draw_rate']*100:.1f}%\n"
         f"• Goles promedio: {best['goals_avg']:.2f}\n"
         f"• Dif. goles: {best['goal_diff']:.2f}\n"
-        f"• Score: {best['score']:.3f}\n\n"
+        f"• Score: {best['score']:.3f}\n"
+        f"• Datos: {best['quality']}\n\n"
         f"🧠 <b>Evaluación:</b> {status}"
     )
 
