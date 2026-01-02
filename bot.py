@@ -1,15 +1,24 @@
-import requests
 import os
+import requests
+from datetime import datetime
 
+# =====================
+# VARIABLES DE ENTORNO
+# =====================
 API_KEY = os.getenv("API_KEY")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
+# =====================
+# CONFIG
+# =====================
+API_URL = "https://v3.football.api-sports.io"
 HEADERS = {
     "x-apisports-key": API_KEY
 }
 
-LEAGUES = [
+# LIGAS A MONITOREAR (IDs que tú confirmaste)
+LEAGUE_IDS = [
     363,  # Ethiopia
     585,  # Uganda
     567,  # Tanzania
@@ -19,81 +28,77 @@ LEAGUES = [
     398   # Bangladesh
 ]
 
-def get_fixtures():
+# =====================
+# TELEGRAM
+# =====================
+def send_telegram(message: str):
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": CHAT_ID,
+        "text": message
+    }
+    r = requests.post(url, data=payload, timeout=15)
+    r.raise_for_status()
+
+# =====================
+# API FOOTBALL
+# =====================
+def get_next_fixtures():
     fixtures = []
-    for league in LEAGUES:
-        url = f"https://v3.football.api-sports.io/fixtures?league={league}&next=5"
-        r = requests.get(url, headers=HEADERS)
+
+    for league_id in LEAGUE_IDS:
+        params = {
+            "league": league_id,
+            "season": 2025,
+            "next": 1
+        }
+
+        r = requests.get(f"{API_URL}/fixtures", headers=HEADERS, params=params, timeout=20)
+        r.raise_for_status()
         data = r.json()
-        fixtures.extend(data["response"])
+
+        if data.get("response"):
+            fixtures.append(data["response"][0])
+
     return fixtures
 
-def get_team_stats(team_id, league, season):
-    url = f"https://v3.football.api-sports.io/teams/statistics?team={team_id}&league={league}&season={season}"
-    r = requests.get(url, headers=HEADERS)
-    return r.json()["response"]
-
-def analyze_match(stats):
-    draw_rate = stats["draw_rate"]
-    goals_avg = stats["goals_avg"]
-    goal_diff = stats["goal_diff"]
-
-    score = 0
-
-    # Criterios relajados SOLO PARA PRUEBA
-    if draw_rate >= 0.30:
-        score += 1
-    if goals_avg <= 3.2:
-        score += 1
-    if goal_diff <= 1.2:
-        score += 1
-
-    # BONUS para que siempre exista ganador
-    score += draw_rate
-
-    return score, draw_rate, goals_avg, goal_diff
-
-
-
-def send_message(text):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    requests.post(url, data={
-        "chat_id": CHAT_ID,
-        "text": text,
-        "parse_mode": "HTML"
-    })
-
+# =====================
+# MAIN
+# =====================
 def main():
-    fixtures = get_fixtures()
-    best = None
-    best_score = -1
+    fixtures = get_next_fixtures()
 
-    for f in fixtures:
-        try:
-            score, draw, goals, diff = analyze_match(f)
-            if score > best_score:
-                best_score = score
-                best = (f, draw, goals, diff)
-        except:
-            continue
-
-    if not best:
-        send_message("⚠️ No se encontró ningún partido analizable.")
+    if not fixtures:
+        send_telegram("⚠️ PRUEBA BOT\nNo se encontró ningún partido en las ligas monitoreadas.")
         return
 
-    f, draw, goals, diff = best
+    # TOMAMOS EL PRIMER PARTIDO DISPONIBLE (FORZADO)
+    match = fixtures[0]
 
-    msg = (
-        f"🤝 <b>MEJOR PARTIDO PARA EMPATE</b>\n\n"
-        f"{f['teams']['home']['name']} vs {f['teams']['away']['name']}\n"
-        f"🏆 Liga: {f['league']['name']}\n"
-        f"📅 Fecha: {f['fixture']['date'][:10]}\n\n"
-        f"📊 Empates combinados: {round(draw*100,1)}%\n"
-        f"⚽ Goles promedio: {round(goals,2)}\n"
-        f"📉 Diferencia ofensiva: {round(diff,2)}"
+    home = match["teams"]["home"]["name"]
+    away = match["teams"]["away"]["name"]
+    league = match["league"]["name"]
+    country = match["league"]["country"]
+    date_utc = match["fixture"]["date"]
+
+    date_local = datetime.fromisoformat(date_utc.replace("Z", "+00:00"))
+
+    message = (
+        "🧪 PRUEBA BOT — PARTIDO DETECTADO\n\n"
+        f"🏟 Partido: {home} vs {away}\n"
+        f"🏆 Liga: {league} ({country})\n"
+        f"📅 Fecha: {date_local}\n\n"
+        "Este mensaje confirma que:\n"
+        "✅ API-Football responde\n"
+        "✅ GitHub Actions ejecuta\n"
+        "✅ Telegram notifica\n\n"
+        "Luego se vuelven a activar criterios de empate."
     )
 
-    send_message(msg)
+    send_telegram(message)
 
+# =====================
+# RUN
+# =====================
 if __name__ == "__main__":
     main()
