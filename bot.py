@@ -1,6 +1,6 @@
 import os
 import requests
-from datetime import datetime
+from datetime import datetime, timedelta
 
 API_KEY = os.getenv("API_KEY")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -20,10 +20,14 @@ def send_telegram(message):
     r = requests.post(url, data=payload, timeout=15)
     r.raise_for_status()
 
-def get_any_next_fixture():
+def get_fixture_by_date():
+    target_date = (datetime.utcnow() + timedelta(days=2)).strftime("%Y-%m-%d")
+
     params = {
-        "next": 1
+        "date": target_date,
+        "status": "NS"
     }
+
     r = requests.get(f"{API_URL}/fixtures", headers=HEADERS, params=params, timeout=20)
     r.raise_for_status()
     data = r.json()
@@ -34,10 +38,10 @@ def get_any_next_fixture():
     return data["response"][0]
 
 def main():
-    match = get_any_next_fixture()
+    match = get_fixture_by_date()
 
     if not match:
-        send_telegram("❌ API respondió pero NO devolvió ningún fixture (esto ya sería raro).")
+        send_telegram("❌ No hay partidos NS para la fecha consultada.")
         return
 
     home = match["teams"]["home"]["name"]
@@ -49,18 +53,18 @@ def main():
     date_local = datetime.fromisoformat(date_utc.replace("Z", "+00:00"))
 
     message = (
-        "✅ PRUEBA DEFINITIVA — PARTIDO ENCONTRADO\n\n"
+        "✅ PRUEBA OK — PARTIDO ENCONTRADO\n\n"
         f"🏟 {home} vs {away}\n"
         f"🏆 {league} ({country})\n"
         f"📅 {date_local}\n\n"
-        "Esto prueba que:\n"
-        "✔ API funciona\n"
-        "✔ Bot corre\n"
-        "✔ Telegram recibe\n\n"
-        "Ahora sí se puede volver a filtrar ligas y empates."
+        "Confirmado:\n"
+        "✔ API responde\n"
+        "✔ Hay fixtures\n"
+        "✔ Telegram funciona\n"
     )
 
     send_telegram(message)
 
 if __name__ == "__main__":
     main()
+
