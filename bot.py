@@ -61,15 +61,21 @@ def analyze_match(fixture):
         stats_away["goals"]["for"]["average"]["total"]
     )
 
-    score = 0
-    if draw_rate >= 0.45:
-        score += 1
-    if goals_avg <= 2.4:
-        score += 1
-    if goal_diff <= 0.5:
-        score += 1
+score = 0
 
-    return score, draw_rate, goals_avg, goal_diff
+# Criterios relajados SOLO PARA PRUEBA
+if draw_rate >= 0.30:
+    score += 1
+if goals_avg <= 3.2:
+    score += 1
+if goal_diff <= 1.2:
+    score += 1
+
+# BONUS para que siempre exista ganador
+score += draw_rate
+
+return score, draw_rate, goals_avg, goal_diff
+
 
 def send_message(text):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
