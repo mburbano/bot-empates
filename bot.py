@@ -1,10 +1,9 @@
 import os
 import requests
-from datetime import datetime, timedelta
-import pytz
+from datetime import datetime, timedelta, timezone
 
 # =========================
-# VARIABLES (NO CAMBIAR NOMBRES)
+# VARIABLES (NO CAMBIAR)
 # =========================
 API_KEY = os.getenv("API_KEY")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -23,8 +22,8 @@ WEIGHT_DRAW_RATE = 0.5
 WEIGHT_GOALS_AVG = 0.3
 WEIGHT_GOAL_DIFF = 0.2
 
-# Timezone Ecuador
-ECUADOR_TZ = pytz.timezone("America/Guayaquil")
+# Timezone Ecuador (UTC-5)
+ECUADOR_OFFSET = timedelta(hours=-5)
 
 # =========================
 # HELPERS
@@ -38,21 +37,18 @@ def get_fixtures():
     today = datetime.utcnow().date()
     tomorrow = today + timedelta(days=1)
 
-    fixtures = api_get("fixtures", {
+    return api_get("fixtures", {
         "from": today.isoformat(),
         "to": tomorrow.isoformat(),
         "status": "NS"
     })
 
-    return fixtures
-
 def get_h2h(home_id, away_id):
     try:
-        h2h = api_get("fixtures/headtohead", {
+        return api_get("fixtures/headtohead", {
             "h2h": f"{home_id}-{away_id}",
             "last": 10
         })
-        return h2h
     except:
         return []
 
@@ -106,24 +102,22 @@ def analyze_match(fixture):
 
 def send_telegram(msg):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    payload = {
+    requests.post(url, data={
         "chat_id": CHAT_ID,
         "text": msg,
         "parse_mode": "HTML"
-    }
-    requests.post(url, data=payload, timeout=20)
+    }, timeout=20)
 
 def format_datetime_ecuador(utc_str):
     utc_dt = datetime.fromisoformat(utc_str.replace("Z", "+00:00"))
-    local_dt = utc_dt.astimezone(ECUADOR_TZ)
-    return local_dt.strftime("%Y-%m-%d %H:%M")
+    ecu_dt = utc_dt + ECUADOR_OFFSET
+    return ecu_dt.strftime("%Y-%m-%d %H:%M")
 
 # =========================
 # MAIN
 # =========================
 def main():
     fixtures = get_fixtures()
-
     analyzed = []
 
     for f in fixtures:
@@ -132,7 +126,7 @@ def main():
         except:
             continue
 
-    # SIEMPRE FORZAR AL MENOS UNO
+    # FORZAR SIEMPRE 1 PARTIDO
     if len(analyzed) == 0 and len(fixtures) > 0:
         f = fixtures[0]
         analyzed.append({
