@@ -1,9 +1,9 @@
 name: Bot Empates
 
 on:
+  workflow_dispatch:
   schedule:
     - cron: '0 */12 * * *'
-  workflow_dispatch:
 
 jobs:
   run:
@@ -16,6 +16,6 @@ jobs:
       - run: pip install requests
       - run: python bot.py
         env:
-          API_FOOTBALL_KEY: ${{ secrets.API_KEY }}
-          TELEGRAM_BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          API_KEY: ${{ secrets.API_KEY }}
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
