@@ -33,48 +33,26 @@ def get_team_stats(team_id, league, season):
     r = requests.get(url, headers=HEADERS)
     return r.json()["response"]
 
-def analyze_match(fixture):
-    league = fixture["league"]["id"]
-    season = fixture["league"]["season"]
+def analyze_match(stats):
+    draw_rate = stats["draw_rate"]
+    goals_avg = stats["goals_avg"]
+    goal_diff = stats["goal_diff"]
 
-    home = fixture["teams"]["home"]
-    away = fixture["teams"]["away"]
+    score = 0
 
-    stats_home = get_team_stats(home["id"], league, season)
-    stats_away = get_team_stats(away["id"], league, season)
+    # Criterios relajados SOLO PARA PRUEBA
+    if draw_rate >= 0.30:
+        score += 1
+    if goals_avg <= 3.2:
+        score += 1
+    if goal_diff <= 1.2:
+        score += 1
 
-    draw_rate = (
-        stats_home["fixtures"]["draws"]["total"] +
-        stats_away["fixtures"]["draws"]["total"]
-    ) / (
-        stats_home["fixtures"]["played"]["total"] +
-        stats_away["fixtures"]["played"]["total"]
-    )
+    # BONUS para que siempre exista ganador
+    score += draw_rate
 
-    goals_avg = (
-        stats_home["goals"]["for"]["average"]["total"] +
-        stats_away["goals"]["for"]["average"]["total"]
-    ) / 2
+    return score, draw_rate, goals_avg, goal_diff
 
-    goal_diff = abs(
-        stats_home["goals"]["for"]["average"]["total"] -
-        stats_away["goals"]["for"]["average"]["total"]
-    )
-
-score = 0
-
-# Criterios relajados SOLO PARA PRUEBA
-if draw_rate >= 0.30:
-    score += 1
-if goals_avg <= 3.2:
-    score += 1
-if goal_diff <= 1.2:
-    score += 1
-
-# BONUS para que siempre exista ganador
-score += draw_rate
-
-return score, draw_rate, goals_avg, goal_diff
 
 
 def send_message(text):
