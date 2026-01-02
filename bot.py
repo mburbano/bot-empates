@@ -67,6 +67,8 @@ def main():
     for lid, lname in LEAGUES.items():
         fx = get(f"https://v3.football.api-sports.io/fixtures?league={lid}&season={SEASON}&next={NEXT_FIXTURES}")
         for f in fx.get("response", []):
+            tg(f"TEST: {f['teams']['home']['name']} vs {f['teams']['away']['name']}")
+return
             hid = f["teams"]["home"]["id"]
             aid = f["teams"]["away"]["id"]
 
