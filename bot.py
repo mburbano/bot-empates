@@ -1,6 +1,6 @@
 import os
 import requests
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 # =========================
 # VARIABLES (NO CAMBIAR)
@@ -13,16 +13,12 @@ CHAT_ID = os.getenv("CHAT_ID")
 # CONFIG
 # =========================
 API_URL = "https://v3.football.api-sports.io"
-HEADERS = {
-    "x-apisports-key": API_KEY
-}
+HEADERS = {"x-apisports-key": API_KEY}
 
-# Pesos del score
 WEIGHT_DRAW_RATE = 0.5
 WEIGHT_GOALS_AVG = 0.3
 WEIGHT_GOAL_DIFF = 0.2
 
-# Timezone Ecuador (UTC-5)
 ECUADOR_OFFSET = timedelta(hours=-5)
 
 # =========================
@@ -31,7 +27,7 @@ ECUADOR_OFFSET = timedelta(hours=-5)
 def api_get(endpoint, params):
     r = requests.get(f"{API_URL}/{endpoint}", headers=HEADERS, params=params, timeout=30)
     r.raise_for_status()
-    return r.json()["response"]
+    return r.json().get("response", [])
 
 def get_fixtures():
     today = datetime.utcnow().date()
@@ -64,13 +60,10 @@ def analyze_match(fixture):
         goal_diff = 2.0
         forced = True
     else:
-        draws = 0
-        goals = []
-        diffs = []
+        draws, goals, diffs = 0, [], []
 
         for m in h2h:
-            gh = m["goals"]["home"]
-            ga = m["goals"]["away"]
+            gh, ga = m["goals"]["home"], m["goals"]["away"]
             if gh == ga:
                 draws += 1
             goals.append(gh + ga)
@@ -108,16 +101,25 @@ def send_telegram(msg):
         "parse_mode": "HTML"
     }, timeout=20)
 
-def format_datetime_ecuador(utc_str):
+def format_ecuador(utc_str):
     utc_dt = datetime.fromisoformat(utc_str.replace("Z", "+00:00"))
-    ecu_dt = utc_dt + ECUADOR_OFFSET
-    return ecu_dt.strftime("%Y-%m-%d %H:%M")
+    return (utc_dt + ECUADOR_OFFSET).strftime("%Y-%m-%d %H:%M")
 
 # =========================
 # MAIN
 # =========================
 def main():
     fixtures = get_fixtures()
+
+    # CASO EXTREMO: CERO PARTIDOS
+    if not fixtures:
+        send_telegram(
+            "⚠️ <b>Sin partidos disponibles</b>\n\n"
+            "La API no reporta encuentros próximos.\n"
+            "El bot seguirá intentando automáticamente."
+        )
+        return
+
     analyzed = []
 
     for f in fixtures:
@@ -126,8 +128,8 @@ def main():
         except:
             continue
 
-    # FORZAR SIEMPRE 1 PARTIDO
-    if len(analyzed) == 0 and len(fixtures) > 0:
+    # Fallback absoluto
+    if not analyzed:
         f = fixtures[0]
         analyzed.append({
             "score": 0.0,
@@ -142,7 +144,7 @@ def main():
             "forced": True
         })
 
-    best = sorted(analyzed, key=lambda x: x["score"], reverse=True)[0]
+    best = max(analyzed, key=lambda x: x["score"])
 
     if best["forced"]:
         status = "⚠️ Partido forzado (pocos datos)"
@@ -155,7 +157,7 @@ def main():
         f"⚽ <b>MEJOR PARTIDO PARA EMPATE</b>\n\n"
         f"🏆 {best['league']} ({best['country']})\n"
         f"👥 {best['home']} vs {best['away']}\n"
-        f"🕒 {format_datetime_ecuador(best['datetime'])} (Ecuador)\n\n"
+        f"🕒 {format_ecuador(best['datetime'])} (Ecuador)\n\n"
         f"📊 <b>Métricas</b>\n"
         f"• % Empates: {best['draw_rate']*100:.1f}%\n"
         f"• Goles promedio: {best['goals_avg']:.2f}\n"
