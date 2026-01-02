@@ -21,9 +21,9 @@ LEAGUES = {
 
 SEASON = 2024
 NEXT_FIXTURES = 20
-MIN_DRAW_ODDS = 2.80     # NO cuotas basura
-MAX_AVG_GOALS = 2.2      # partidos cerrados
-MIN_DRAW_RATE = 0.30     # 30% empates recientes
+MIN_DRAW_ODDS = 2.20     # NO cuotas basura
+MAX_AVG_GOALS = 3.5      # partidos cerrados
+MIN_DRAW_RATE = 0.15     # 30% empates recientes
 
 def tg(msg):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
